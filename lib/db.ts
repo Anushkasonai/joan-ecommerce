@@ -1,0 +1,950 @@
+import fs from 'fs';
+import path from 'path';
+import bcrypt from 'bcryptjs';
+
+const DB_DIR = path.join(process.cwd(), 'data');
+const DB_FILE = path.join(DB_DIR, 'db.json');
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  passwordHash: string;
+  role: 'user' | 'admin';
+  createdAt: string;
+}
+
+export interface Review {
+  id: string;
+  userName: string;
+  rating: number;
+  comment: string;
+  createdAt: string;
+}
+
+export interface Product {
+  id: string;
+  name: string;
+  description: string;
+  price: number;
+  originalPrice: number;
+  category: string;
+  image: string;
+  rating: number;
+  reviewCount: number;
+  reviews: Review[];
+  specs: Record<string, string>;
+  stock: number;
+  featured: boolean;
+}
+
+export interface OrderItem {
+  productId: string;
+  name: string;
+  price: number;
+  quantity: number;
+  image: string;
+}
+
+export interface Order {
+  id: string;
+  userId: string;
+  items: OrderItem[];
+  deliveryAddress: {
+    name: string;
+    phone: string;
+    street: string;
+    city: string;
+    state: string;
+    zip: string;
+  };
+  paymentStatus: 'pending' | 'paid' | 'failed';
+  orderStatus: 'ordered' | 'paid' | 'packed' | 'shipped' | 'out_for_delivery' | 'delivered' | 'cancelled';
+  paymentMethod: string;
+  paymentDetails?: {
+    razorpayOrderId?: string;
+    razorpayPaymentId?: string;
+    razorpaySignature?: string;
+  };
+  totalAmount: number;
+  createdAt: string;
+}
+
+export interface CartItem {
+  productId: string;
+  quantity: number;
+}
+
+export interface DbSchema {
+  users: User[];
+  products: Product[];
+  orders: Order[];
+  carts: Record<string, CartItem[]>; // userId -> items
+  wishlists: Record<string, string[]>; // userId -> productIds
+}
+
+// Initial seed products with realistic Indian marketplace pricing and categories
+const initialProducts: Omit<Product, 'reviews'>[] = [
+  // 1. Women's fashion
+  {
+    id: 'prod_wf_1',
+    name: "Handcrafted Floral Anarkali Cotton Kurta Set (Pastel Sage)",
+    description: "Graceful cambric cotton Anarkali kurta featuring intricate thread embroidery, sweetheart neckline, and flared hem. Includes matching cotton pants and dupatta.",
+    price: 899,
+    originalPrice: 1399,
+    category: "Women's fashion",
+    image: "https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?q=80&w=600&auto=format&fit=crop",
+    rating: 4.7,
+    reviewCount: 184,
+    specs: {
+      "Fabric": "100% Breathable Cambric Cotton",
+      "Length": "Calf Length (46 inches)",
+      "Origin": "Jaipur, Rajasthan",
+      "Care": "Gentle hand wash recommended"
+    },
+    stock: 35,
+    featured: true
+  },
+  {
+    id: 'prod_wf_2',
+    name: "Pure Mulmul Cotton Floral Print Tiered Summer Dress",
+    description: "Lightweight and flowy tiered midi dress crafted from artisanal Jaipur hand-block printed mulmul. Designed with ruffled flutter sleeves and elasticated cinched waist.",
+    price: 1299,
+    originalPrice: 1899,
+    category: "Women's fashion",
+    image: "https://images.unsplash.com/photo-1572804013309-59a88b7e92f1?q=80&w=600&auto=format&fit=crop",
+    rating: 4.8,
+    reviewCount: 142,
+    specs: {
+      "Fabric": "100% Pure Mulmul Cotton",
+      "Fit": "Relaxed Tiered Fit",
+      "Length": "Midi (44 inches)",
+      "Lining": "Attached soft cotton inner"
+    },
+    stock: 28,
+    featured: true
+  },
+  {
+    id: 'prod_wf_3',
+    name: "High-Rise Relaxed Wide-Leg Denim Jeans (Vintage Wash)",
+    description: "Contemporary wide-leg jeans tailored with 100% ring-spun cotton denim. Features high-rise contour waistband, deep utility pockets, and reinforced seam stitching.",
+    price: 1199,
+    originalPrice: 1699,
+    category: "Women's fashion",
+    image: "https://images.unsplash.com/photo-1541099649105-f69ad21f3246?q=80&w=600&auto=format&fit=crop",
+    rating: 4.5,
+    reviewCount: 210,
+    specs: {
+      "Material": "100% Ring-Spun Cotton Denim",
+      "Rise": "High-Rise Waist",
+      "Inseam": "30 inches",
+      "Closure": "YKK Brass Zip with Button"
+    },
+    stock: 40,
+    featured: false
+  },
+  {
+    id: 'prod_wf_4',
+    name: "Handwoven Pure Chanderi Silk Zari Saree (Blush Pink)",
+    description: "Exquisite traditional Chanderi handloom saree woven with delicate golden zari motifs and contrasting woven border. Includes unstitched blouse piece.",
+    price: 1899,
+    originalPrice: 2699,
+    category: "Women's fashion",
+    image: "https://images.unsplash.com/photo-1610030469983-98e550d6193c?q=80&w=600&auto=format&fit=crop",
+    rating: 4.9,
+    reviewCount: 96,
+    specs: {
+      "Fabric": "Pure Chanderi Cotton Silk",
+      "Length": "6.3 Metres with Blouse Piece",
+      "Weave": "Handcrafted Jacquard Border",
+      "Origin": "Madhya Pradesh"
+    },
+    stock: 20,
+    featured: true
+  },
+
+  // 2. Men's fashion
+  {
+    id: 'prod_mf_1',
+    name: "Men's Pure Combed Cotton Crew Neck T-Shirt (Sage & Lilac)",
+    description: "Ultra-breathable bio-washed 100% combed cotton t-shirt. Tailored for all-day comfort in Indian weather with durable ribbed neckband and color-lock treatment.",
+    price: 399,
+    originalPrice: 699,
+    category: "Men's fashion",
+    image: "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?q=80&w=600&auto=format&fit=crop",
+    rating: 4.5,
+    reviewCount: 238,
+    specs: {
+      "Fabric": "100% Combed Bio-Washed Cotton",
+      "Fit": "Regular Everyday Fit",
+      "Sleeve": "Half Sleeve",
+      "Origin": "Tirupur, Tamil Nadu"
+    },
+    stock: 50,
+    featured: true
+  },
+  {
+    id: 'prod_mf_2',
+    name: "Men's Casual Linen Blend Solid Spread Collar Shirt",
+    description: "Crisp and lightweight linen-cotton blend shirt in soothing natural ecru. Designed with a curved hem, chest pocket, and mother-of-pearl style buttons.",
+    price: 799,
+    originalPrice: 1299,
+    category: "Men's fashion",
+    image: "https://images.unsplash.com/photo-1596755094514-f87e34085b2c?q=80&w=600&auto=format&fit=crop",
+    rating: 4.6,
+    reviewCount: 147,
+    specs: {
+      "Fabric": "60% Linen, 40% Cotton",
+      "Collar": "Modern Spread Collar",
+      "Sleeve": "Full Sleeve with Button Cuffs",
+      "Wash Care": "Machine wash cold"
+    },
+    stock: 36,
+    featured: false
+  },
+  {
+    id: 'prod_mf_3',
+    name: "Men's Mid-Rise Slim Stretch Denim Jeans (Classic Indigo)",
+    description: "Authentic ring-spun cotton denim engineered with 2% elastane for maximum flexibility. Finished with handcrafted whiskering and durable copper hardware.",
+    price: 1199,
+    originalPrice: 1799,
+    category: "Men's fashion",
+    image: "https://images.unsplash.com/photo-1542272604-780c96856592?q=80&w=600&auto=format&fit=crop",
+    rating: 4.4,
+    reviewCount: 312,
+    specs: {
+      "Material": "98% Cotton, 2% Spandex",
+      "Fit": "Slim Straight",
+      "Rise": "Mid-Rise Waist",
+      "Pockets": "5 Pocket Classic Styling"
+    },
+    stock: 45,
+    featured: false
+  },
+  {
+    id: 'prod_mf_4',
+    name: "Royal Jacquard Festive Kurta Pajama Set (Pastel Lavender)",
+    description: "Rich self-woven jacquard kurta with subtle mandarin collar and decorative buttons, paired with comfortable drawstring churidar pyjamas.",
+    price: 1499,
+    originalPrice: 2199,
+    category: "Men's fashion",
+    image: "https://images.unsplash.com/photo-1597983073493-88cd35cf93b0?q=80&w=600&auto=format&fit=crop",
+    rating: 4.7,
+    reviewCount: 128,
+    specs: {
+      "Fabric": "Rich Jacquard Art Silk Blend",
+      "Set": "Kurta + Churidar Pyjama",
+      "Occasion": "Festive, Wedding, Celebrations",
+      "Origin": "Varanasi"
+    },
+    stock: 25,
+    featured: true
+  },
+
+  // 3. Bags and accessories
+  {
+    id: 'prod_ba_1',
+    name: "Handcrafted 100% Canvas Cotton Zipper Tote Bag",
+    description: "Sturdy eco-friendly 12oz natural cotton canvas tote bag. Features a smooth main zipper, reinforced cross-stitched shoulder handles, and dedicated interior pocket.",
+    price: 349,
+    originalPrice: 699,
+    category: "Bags and accessories",
+    image: "https://images.unsplash.com/photo-1544816155-12df9643f363?q=80&w=600&auto=format&fit=crop",
+    rating: 4.7,
+    reviewCount: 280,
+    specs: {
+      "Material": "12oz Premium Natural Cotton Canvas",
+      "Dimensions": "38 cm H x 35 cm W x 10 cm Gusset",
+      "Closure": "Heavy-Duty Top Zipper",
+      "Capacity": "Holds up to 12 kg"
+    },
+    stock: 65,
+    featured: true
+  },
+  {
+    id: 'prod_ba_2',
+    name: "Handcrafted Genuine Leather Bi-fold Minimalist Wallet",
+    description: "Sleek vegetable-tanned genuine leather bi-fold wallet featuring RFID blocking shield, 8 card slots, dual currency compartments, and quick-access ID window.",
+    price: 499,
+    originalPrice: 799,
+    category: "Bags and accessories",
+    image: "https://images.unsplash.com/photo-1627123424574-724758594e93?q=80&w=600&auto=format&fit=crop",
+    rating: 4.6,
+    reviewCount: 195,
+    specs: {
+      "Material": "100% Genuine Top-Grain Leather",
+      "Protection": "RFID Blocking Technology",
+      "Slots": "8 Card Slots + 2 Cash Compartments",
+      "Warranty": "6 Months Brand Warranty"
+    },
+    stock: 55,
+    featured: false
+  },
+  {
+    id: 'prod_ba_3',
+    name: "Water-Resistant Daily Commute 25L Laptop Backpack with USB Port",
+    description: "Ergonomic multi-compartment backpack fitting up to 15.6 inch laptops. Features water-repellent ballistic polyester fabric, luggage trolley strap, and hidden anti-theft pocket.",
+    price: 899,
+    originalPrice: 1499,
+    category: "Bags and accessories",
+    image: "https://images.unsplash.com/photo-1553062407-98eeb64c6a62?q=80&w=600&auto=format&fit=crop",
+    rating: 4.6,
+    reviewCount: 540,
+    specs: {
+      "Capacity": "25 Litres Volume",
+      "Laptop Sleeve": "Fits up to 15.6 inch Laptops (Padded)",
+      "Material": "Water-Repellent 600D Polyester",
+      "Features": "External USB Pass-Through"
+    },
+    stock: 50,
+    featured: true
+  },
+  {
+    id: 'prod_ba_4',
+    name: "Pearl & Gold-Plated Minimalist Choker Jewellery Set",
+    description: "Delicate handcrafted choker necklace strung with lustrous freshwater-style faux pearls and 18K gold-plated accents. Includes matching stud earrings.",
+    price: 399,
+    originalPrice: 699,
+    category: "Bags and accessories",
+    image: "https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?q=80&w=600&auto=format&fit=crop",
+    rating: 4.8,
+    reviewCount: 165,
+    specs: {
+      "Plating": "18K Micron Gold Polish",
+      "Stone": "High-Grade Faux Pearl Beads",
+      "Closure": "Adjustable Lobster Clasp Chain",
+      "Skin-Safe": "Hypoallergenic, Lead & Nickel Free"
+    },
+    stock: 40,
+    featured: false
+  },
+
+  // 4. Beauty and personal care
+  {
+    id: 'prod_bp_1',
+    name: "Kumkumadi Tailam Kashmiri Saffron Radiance Face Serum (30ml)",
+    description: "Authentic Ayurvedic formulation infused with Kashmiri saffron, red sandalwood, and 26 active botanicals. Visibly brightens dull complexion and evens skin tone.",
+    price: 499,
+    originalPrice: 799,
+    category: "Beauty and personal care",
+    image: "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?q=80&w=600&auto=format&fit=crop",
+    rating: 4.8,
+    reviewCount: 420,
+    specs: {
+      "Volume": "30 ml Glass Dropper Bottle",
+      "Skin Type": "Suitable for all skin types",
+      "Key Herbs": "Kashmiri Saffron, Manjistha, Sandalwood",
+      "Certification": "100% Ayurvedic"
+    },
+    stock: 55,
+    featured: true
+  },
+  {
+    id: 'prod_bp_2',
+    name: "Neem & Green Tea Clarifying Foaming Face Wash (150ml)",
+    description: "Gentle soap-free face cleanser with organic neem extract and green tea. Effectively cleanses clogged pores and regulates excess sebum without overdrying.",
+    price: 249,
+    originalPrice: 349,
+    category: "Beauty and personal care",
+    image: "https://images.unsplash.com/photo-1556228720-195a672e8a03?q=80&w=600&auto=format&fit=crop",
+    rating: 4.5,
+    reviewCount: 295,
+    specs: {
+      "Volume": "150 ml Pump Dispenser",
+      "Key Benefits": "Pore Purifying & Blemish Defense",
+      "Toxin-Free": "No Parabens, SLS, or Mineral Oil",
+      "Origin": "Bengaluru, Karnataka"
+    },
+    stock: 75,
+    featured: false
+  },
+  {
+    id: 'prod_bp_3',
+    name: "Kannauj Pure Steam-Distilled Rose Water Gulab Jal (200ml)",
+    description: "100% pure steam-distilled rose water made from the renowned Noor Jahan Damascena roses of Kannauj. Refreshes, balances pH, and soothes tired skin.",
+    price: 199,
+    originalPrice: 279,
+    category: "Beauty and personal care",
+    image: "https://images.unsplash.com/photo-1608248597359-2162a8c3d906?q=80&w=600&auto=format&fit=crop",
+    rating: 4.7,
+    reviewCount: 512,
+    specs: {
+      "Volume": "200 ml Fine Mist Spray",
+      "Extraction": "Traditional Deg-Bhapka Steam Distillation",
+      "Origin": "Kannauj, Uttar Pradesh",
+      "Additive-Free": "No Alcohol or Preservatives"
+    },
+    stock: 90,
+    featured: true
+  },
+  {
+    id: 'prod_bp_4',
+    name: "Ultralight SPF 50+ PA++++ Dewy Sunscreen Gel (50g)",
+    description: "Broad-spectrum hybrid sunscreen enriched with hyaluronic acid and niacinamide. Zero white cast, non-sticky water gel formulation that absorbs in seconds.",
+    price: 349,
+    originalPrice: 499,
+    category: "Beauty and personal care",
+    image: "https://images.unsplash.com/photo-1598440947619-2c35fc9aa908?q=80&w=600&auto=format&fit=crop",
+    rating: 4.7,
+    reviewCount: 380,
+    specs: {
+      "SPF Rating": "SPF 50+ with PA++++ Protection",
+      "Net Weight": "50 Grams",
+      "Texture": "Water-Light Gel",
+      "Finish": "Natural Dewy Glow"
+    },
+    stock: 65,
+    featured: true
+  },
+
+  // 5. Electronics and mobile accessories
+  {
+    id: 'prod_ea_1',
+    name: "boAt Rockerz 255 Pro+ Wireless Neckband (40H Playtime)",
+    description: "India's bestselling magnetic Bluetooth neckband equipped with 10mm dynamic bass drivers, ASAP quick charging (10 mins = 10 hrs), and IPX7 sweat shield.",
+    price: 1099,
+    originalPrice: 1990,
+    category: "Electronics and mobile accessories",
+    image: "https://images.unsplash.com/photo-1572536147248-ac59a8abfa4b?q=80&w=600&auto=format&fit=crop",
+    rating: 4.4,
+    reviewCount: 890,
+    specs: {
+      "Playback": "Up to 40 Hours Continuous Music",
+      "Charging": "Type-C ASAP Charge",
+      "Drivers": "10mm High-Performance Drivers",
+      "Water Resistance": "IPX7 Sweat & Water Resistant"
+    },
+    stock: 85,
+    featured: true
+  },
+  {
+    id: 'prod_ea_2',
+    name: "Noise Buds VS102 Truly Wireless Earbuds (50H Playtime, Quad Mic ENC)",
+    description: "Ultra-compact true wireless stereo earbuds featuring Quad Mics with Environmental Noise Cancellation (ENC) for crystal clear hands-free voice calls.",
+    price: 1299,
+    originalPrice: 2499,
+    category: "Electronics and mobile accessories",
+    image: "https://images.unsplash.com/photo-1590658268037-6bf12165a8df?q=80&w=600&auto=format&fit=crop",
+    rating: 4.3,
+    reviewCount: 650,
+    specs: {
+      "Total Playtime": "50 Hours with Pocket Case",
+      "Calling": "Quad Mic Environmental Noise Cancellation",
+      "Low Latency": "45ms Dedicated Gaming Mode",
+      "Bluetooth": "v5.3 Instant Pairing"
+    },
+    stock: 65,
+    featured: true
+  },
+  {
+    id: 'prod_ea_3',
+    name: "20W Type-C Dual Port Fast Wall Charger (PD 3.0 & QC 3.0)",
+    description: "BIS-certified high efficiency compact fast adapter compatible with iPhone, Samsung Galaxy, Pixel, and audio gear. Includes intelligent over-voltage protection.",
+    price: 449,
+    originalPrice: 899,
+    category: "Electronics and mobile accessories",
+    image: "https://images.unsplash.com/photo-1583863788434-e58a36330cf0?q=80&w=600&auto=format&fit=crop",
+    rating: 4.6,
+    reviewCount: 435,
+    specs: {
+      "Power Output": "20 Watts Max Power Delivery",
+      "Ports": "1x USB-C PD + 1x USB-A QC 3.0",
+      "Safety": "BIS Certified Smart Chip Protection",
+      "Design": "Compact travel-ready Indian 2-pin plug"
+    },
+    stock: 110,
+    featured: false
+  },
+  {
+    id: 'prod_ea_4',
+    name: "Braided 65W Rapid Fast Charging USB-C to USB-C Cable (1.5m)",
+    description: "Heavy-duty ballistic nylon braided charging cable rated up to 65W PD. Supports high-speed power delivery for smartphones, tablets, and laptops.",
+    price: 199,
+    originalPrice: 399,
+    category: "Electronics and mobile accessories",
+    image: "https://images.unsplash.com/photo-1609592424368-8fc827e8a946?q=80&w=600&auto=format&fit=crop",
+    rating: 4.7,
+    reviewCount: 380,
+    specs: {
+      "Length": "1.5 Metres (5 Feet)",
+      "Max Power": "65W (20V/3.25A) Fast Charging",
+      "Material": "Double-Braided Ballistic Nylon",
+      "Data Speed": "480 Mbps USB 2.0"
+    },
+    stock: 150,
+    featured: false
+  },
+
+  // 6. Home and kitchen
+  {
+    id: 'prod_hk_1',
+    name: "Philips Digital 4.1L Air Fryer (Rapid Air Tech, Touchscreen)",
+    description: "Cook crispy, golden fries and Indian snacks with up to 90% less oil. Features 7 touch presets, auto-shutoff, and dishwasher-safe quick-clean basket.",
+    price: 4999,
+    originalPrice: 6999,
+    category: "Home and kitchen",
+    image: "https://images.unsplash.com/photo-1621972750749-0fbb1abb7736?q=80&w=600&auto=format&fit=crop",
+    rating: 4.6,
+    reviewCount: 720,
+    specs: {
+      "Capacity": "4.1 Litres (Serves 3-4 People)",
+      "Power": "1400 Watts Rapid Convection",
+      "Technology": "Rapid Air 360 Degree Circulation",
+      "Warranty": "2 Years Philips India Warranty"
+    },
+    stock: 24,
+    featured: true
+  },
+  {
+    id: 'prod_hk_2',
+    name: "Milton Thermosteel Flip Lid Insulated Water Bottle (1000ml)",
+    description: "Premium food-grade 304 stainless steel double-walled vacuum flask. Keeps water icy cold or piping hot for 24 full hours. 100% leak-proof and rust-proof.",
+    price: 749,
+    originalPrice: 1050,
+    category: "Home and kitchen",
+    image: "https://images.unsplash.com/photo-1602143407151-7111542de6e8?q=80&w=600&auto=format&fit=crop",
+    rating: 4.7,
+    reviewCount: 940,
+    specs: {
+      "Capacity": "1000 ml (1 Litre)",
+      "Material": "Grade 304 Stainless Steel Inner & Outer",
+      "Thermal Performance": "24 Hours Hot & Cold",
+      "Features": "Flip-top lid with carry loop"
+    },
+    stock: 70,
+    featured: true
+  },
+  {
+    id: 'prod_hk_3',
+    name: "Handcrafted Ceramic Coffee Mug Set of 4 (Pastel Speckled)",
+    description: "Artisan-thrown stoneware ceramic mugs with textured speckled glaze and comfortable ergonomic handle. Perfect for morning filter coffee and masala chai.",
+    price: 599,
+    originalPrice: 899,
+    category: "Home and kitchen",
+    image: "https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?q=80&w=600&auto=format&fit=crop",
+    rating: 4.8,
+    reviewCount: 165,
+    specs: {
+      "Set Size": "Set of 4 Mugs (330ml each)",
+      "Material": "High-Fired Stoneware Ceramic",
+      "Safety": "100% Lead-Free, Microwave Safe",
+      "Origin": "Khurja Pottery, Uttar Pradesh"
+    },
+    stock: 40,
+    featured: false
+  },
+  {
+    id: 'prod_hk_4',
+    name: "Pure Cotton King Size Bedsheet with 2 Pillow Covers (Sage Mandala)",
+    description: "Breathable 210 TC pure cotton double bedsheet with elegant geometric Indian mandala prints. Super soft hand-feel that softens with every wash.",
+    price: 799,
+    originalPrice: 1399,
+    category: "Home and kitchen",
+    image: "https://images.unsplash.com/photo-1584100936595-c0654b55a2e2?q=80&w=600&auto=format&fit=crop",
+    rating: 4.5,
+    reviewCount: 310,
+    specs: {
+      "Bedsheet Size": "274 cm x 274 cm (108 x 108 inches)",
+      "Pillow Covers": "2 Covers (46 cm x 69 cm)",
+      "Thread Count": "210 TC Pure Combed Cotton",
+      "Wash Care": "Colorfast machine wash"
+    },
+    stock: 50,
+    featured: false
+  },
+
+  // 7. Grocery and daily essentials
+  {
+    id: 'prod_gd_1',
+    name: "Tata Tea Gold Rich Taste Assam CTC with 15% Long Leaves (500g)",
+    description: "Exquisite tea crafted with rich CTC granules and 15% gently rolled long aroma leaves from Assam tea gardens. Delivers unbeatable color and uplifting aroma.",
+    price: 315,
+    originalPrice: 360,
+    category: "Grocery and daily essentials",
+    image: "https://images.unsplash.com/photo-1576092768241-dec231879fc3?q=80&w=600&auto=format&fit=crop",
+    rating: 4.8,
+    reviewCount: 1450,
+    specs: {
+      "Net Weight": "500 Grams",
+      "Type": "Assam CTC Granules + 15% Long Leaves",
+      "Packaging": "Airtight Flavour-Lock Seal Pouch",
+      "Best Before": "12 Months from Packaging"
+    },
+    stock: 120,
+    featured: true
+  },
+  {
+    id: 'prod_gd_2',
+    name: "Daawat Rozana Super Basmati Rice (5kg Bag - Aged Grains)",
+    description: "Everyday gourmet basmati rice aged to perfection. Fluffs up to twice its length with non-sticky separate grains and signature sweet Basmati fragrance.",
+    price: 449,
+    originalPrice: 575,
+    category: "Grocery and daily essentials",
+    image: "https://images.unsplash.com/photo-1586201375761-83865001e31c?q=80&w=600&auto=format&fit=crop",
+    rating: 4.7,
+    reviewCount: 890,
+    specs: {
+      "Net Quantity": "5 Kilograms",
+      "Aging": "Aged for over 12 months",
+      "Grain": "Fluffy, Pearly White, Non-Sticky",
+      "Ideal For": "Biryani, Jeera Rice, Pulao"
+    },
+    stock: 80,
+    featured: true
+  },
+  {
+    id: 'prod_gd_3',
+    name: "Happilo 100% Natural California Whole Raw Almonds (500g Jar)",
+    description: "Crunchy, handpicked Nonpareil California badam packed with vitamin E, healthy plant protein, and dietary fiber. Zero cholesterol and preservative-free.",
+    price: 425,
+    originalPrice: 550,
+    category: "Grocery and daily essentials",
+    image: "https://images.unsplash.com/photo-1508061252445-5350f3ab0a55?q=80&w=600&auto=format&fit=crop",
+    rating: 4.9,
+    reviewCount: 1120,
+    specs: {
+      "Net Weight": "500 Grams",
+      "Variety": "California Nonpareil Extra Bold",
+      "Packaging": "Reusable Food-Grade PET Jar",
+      "Dietary": "100% Natural, Gluten-Free"
+    },
+    stock: 95,
+    featured: true
+  },
+  {
+    id: 'prod_gd_4',
+    name: "Fortune Sunlite Refined Sunflower Oil (1 Litre Pouch with Vitamin A & D)",
+    description: "Light and healthy cooking oil fortified with natural Vitamin E and Vitamins A & D. Low-absorb technology keeps your food light and easy to digest.",
+    price: 145,
+    originalPrice: 165,
+    category: "Grocery and daily essentials",
+    image: "https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?q=80&w=600&auto=format&fit=crop",
+    rating: 4.6,
+    reviewCount: 1670,
+    specs: {
+      "Net Quantity": "1 Litre Pouch",
+      "Processing": "Refined Sunflower Seed Oil",
+      "Nutrients": "Fortified with Vitamin A & D",
+      "Best For": "Deep Frying, Sautéing, Baking"
+    },
+    stock: 140,
+    featured: false
+  },
+
+  // 8. Footwear
+  {
+    id: 'prod_fw_1',
+    name: "Men's Ultra-Light Breathable Knit Walking & Running Shoes",
+    description: "Featherlight breathable mesh sneakers designed for daily Indian commutes and morning workouts. Engineered with high-traction phylon sole and memory foam footbed.",
+    price: 899,
+    originalPrice: 1499,
+    category: "Footwear",
+    image: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?q=80&w=600&auto=format&fit=crop",
+    rating: 4.5,
+    reviewCount: 390,
+    specs: {
+      "Upper": "Seamless Engineered Flyknit Mesh",
+      "Midsole": "Shock-Absorbing EVA Phylon Cushion",
+      "Weight": "245g per shoe (Size UK 8)",
+      "Closure": "Adjustable Lace-Up"
+    },
+    stock: 45,
+    featured: true
+  },
+  {
+    id: 'prod_fw_2',
+    name: "Women's Handcrafted Kolhapuri Leather Comfort Flats with Tassels",
+    description: "Traditional Kolhapuri charm redesigned with modern soft dual-layer footbed cushioning. Hand-braided strap with antique brass ghungroo accent.",
+    price: 599,
+    originalPrice: 999,
+    category: "Footwear",
+    image: "https://images.unsplash.com/photo-1562273138-f46be4ebdf33?q=80&w=600&auto=format&fit=crop",
+    rating: 4.6,
+    reviewCount: 215,
+    specs: {
+      "Upper": "Soft Cruelty-Free Faux Leather",
+      "Footbed": "Extra Padded Memory Foam Sole",
+      "Outsole": "Anti-Skid Textured TPR Sole",
+      "Origin": "Kolhapur Craft Hub, Maharashtra"
+    },
+    stock: 35,
+    featured: false
+  },
+  {
+    id: 'prod_fw_3',
+    name: "Women's Orthopedic Soft Cushioned Daily Slide Slippers",
+    description: "Doctor-recommended orthopedic slip-on slides engineered with ultra-soft EVA cushion footbed. Relieves heel fatigue and supports foot arches during household chores.",
+    price: 399,
+    originalPrice: 699,
+    category: "Footwear",
+    image: "https://images.unsplash.com/photo-1595950653106-6c9ebd614d3a?q=80&w=600&auto=format&fit=crop",
+    rating: 4.7,
+    reviewCount: 310,
+    specs: {
+      "Material": "Super-Foam High Density EVA",
+      "Sole": "Grooved Anti-Slip Grip",
+      "Weight": "Only 180g (Pair)",
+      "Usage": "Indoor & Outdoor Casual Wear"
+    },
+    stock: 60,
+    featured: true
+  },
+  {
+    id: 'prod_fw_4',
+    name: "Men's Casual Tan Faux Leather Loafers",
+    description: "Classic driving moccasin loafers with stylish saddle strap detail. Flexible rubber segmented sole and breathable perforated cushioned insole.",
+    price: 999,
+    originalPrice: 1699,
+    category: "Footwear",
+    image: "https://images.unsplash.com/photo-1533867617858-e7b97e060509?q=80&w=600&auto=format&fit=crop",
+    rating: 4.6,
+    reviewCount: 180,
+    specs: {
+      "Upper": "Supple Tan Vegan Leather",
+      "Lining": "Breathable Fabric Lining",
+      "Sole": "Segmented Flexible Driving Sole",
+      "Style": "Slip-On Penny Loafer"
+    },
+    stock: 30,
+    featured: false
+  }
+];
+
+const mockReviews = [
+  { id: 'rev_1', userName: 'Rajesh Kumar', rating: 5, comment: 'Excellent product! Totally worth the price in Indian market. The quality is top notch.', createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString() },
+  { id: 'rev_2', userName: 'Priya Sharma', rating: 4, comment: 'Good value for money. Delivery was fast, and packaging was clean and tamper-proof.', createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString() },
+  { id: 'rev_3', userName: 'Amit Patel', rating: 5, comment: 'Highly recommended! Exceeded my expectations. Great build quality.', createdAt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString() }
+];
+
+export function getDb(): DbSchema {
+  if (!fs.existsSync(DB_DIR)) {
+    fs.mkdirSync(DB_DIR, { recursive: true });
+  }
+
+  if (!fs.existsSync(DB_FILE)) {
+    const salt = bcrypt.genSaltSync(10);
+    const adminPasswordHash = bcrypt.hashSync('Admin@123', salt);
+    const userPasswordHash = bcrypt.hashSync('User@123', salt);
+
+    const productsWithReviews: Product[] = initialProducts.map(p => ({
+      ...p,
+      reviews: mockReviews.map((r, idx) => ({
+        ...r,
+        id: `rev_${p.id}_${idx + 1}`
+      }))
+    }));
+
+    const initialDb: DbSchema = {
+      users: [
+        {
+          id: 'user_admin',
+          name: 'JOAN Admin',
+          email: 'admin@joan.com',
+          passwordHash: adminPasswordHash,
+          role: 'admin',
+          createdAt: new Date().toISOString()
+        },
+        {
+          id: 'user_demo',
+          name: 'Demo Customer',
+          email: 'user@joan.com',
+          passwordHash: userPasswordHash,
+          role: 'user',
+          createdAt: new Date().toISOString()
+        }
+      ],
+      products: productsWithReviews,
+      orders: [],
+      carts: {},
+      wishlists: {}
+    };
+
+    fs.writeFileSync(DB_FILE, JSON.stringify(initialDb, null, 2), 'utf-8');
+    return initialDb;
+  }
+
+  try {
+    const content = fs.readFileSync(DB_FILE, 'utf-8');
+    return JSON.parse(content);
+  } catch (error) {
+    console.error('Failed to parse db file, resetting database', error);
+    // Return empty schema if corrupted
+    return { users: [], products: [], orders: [], carts: {}, wishlists: {} };
+  }
+}
+
+export function saveDb(data: DbSchema): void {
+  if (!fs.existsSync(DB_DIR)) {
+    fs.mkdirSync(DB_DIR, { recursive: true });
+  }
+  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+}
+
+// Product operations
+export function getProducts(): Product[] {
+  return getDb().products;
+}
+
+export function getProductById(id: string): Product | undefined {
+  return getDb().products.find(p => p.id === id);
+}
+
+export function addProduct(product: Omit<Product, 'id' | 'rating' | 'reviewCount' | 'reviews'>): Product {
+  const db = getDb();
+  const newProduct: Product = {
+    ...product,
+    id: 'prod_' + Math.random().toString(36).substring(2, 11),
+    rating: 0,
+    reviewCount: 0,
+    reviews: []
+  };
+  db.products.push(newProduct);
+  saveDb(db);
+  return newProduct;
+}
+
+export function updateProduct(id: string, updatedFields: Partial<Omit<Product, 'id' | 'reviews' | 'rating' | 'reviewCount'>>): Product | undefined {
+  const db = getDb();
+  const index = db.products.findIndex(p => p.id === id);
+  if (index === -1) return undefined;
+  
+  db.products[index] = {
+    ...db.products[index],
+    ...updatedFields
+  } as Product;
+  saveDb(db);
+  return db.products[index];
+}
+
+export function deleteProduct(id: string): boolean {
+  const db = getDb();
+  const initialLength = db.products.length;
+  db.products = db.products.filter(p => p.id !== id);
+  if (db.products.length === initialLength) return false;
+  saveDb(db);
+  return true;
+}
+
+export function addProductReview(productId: string, userName: string, rating: number, comment: string): Product | undefined {
+  const db = getDb();
+  const product = db.products.find(p => p.id === productId);
+  if (!product) return undefined;
+
+  const newReview: Review = {
+    id: 'rev_' + Math.random().toString(36).substring(2, 11),
+    userName,
+    rating,
+    comment,
+    createdAt: new Date().toISOString()
+  };
+
+  product.reviews.push(newReview);
+  product.reviewCount = product.reviews.length;
+  const totalRating = product.reviews.reduce((sum, r) => sum + r.rating, 0);
+  product.rating = parseFloat((totalRating / product.reviewCount).toFixed(1));
+
+  saveDb(db);
+  return product;
+}
+
+// User operations
+export function getUserByEmail(email: string): User | undefined {
+  return getDb().users.find(u => u.email.toLowerCase() === email.toLowerCase());
+}
+
+export function getUserById(id: string): User | undefined {
+  return getDb().users.find(u => u.id === id);
+}
+
+export function addUser(name: string, email: string, passwordHash: string, role: 'user' | 'admin' = 'user'): User {
+  const db = getDb();
+  const newUser: User = {
+    id: 'user_' + Math.random().toString(36).substring(2, 11),
+    name,
+    email,
+    passwordHash,
+    role,
+    createdAt: new Date().toISOString()
+  };
+  db.users.push(newUser);
+  saveDb(db);
+  return newUser;
+}
+
+export function deleteUser(id: string): boolean {
+  const db = getDb();
+  const initialLength = db.users.length;
+  db.users = db.users.filter(u => u.id !== id);
+  if (db.users.length === initialLength) return false;
+  saveDb(db);
+  return true;
+}
+
+// Cart operations
+export function getCart(userId: string): CartItem[] {
+  return getDb().carts[userId] || [];
+}
+
+export function saveCart(userId: string, items: CartItem[]): void {
+  const db = getDb();
+  db.carts[userId] = items;
+  saveDb(db);
+}
+
+// Wishlist operations
+export function getWishlist(userId: string): string[] {
+  return getDb().wishlists[userId] || [];
+}
+
+export function toggleWishlist(userId: string, productId: string): string[] {
+  const db = getDb();
+  if (!db.wishlists[userId]) {
+    db.wishlists[userId] = [];
+  }
+  const index = db.wishlists[userId].indexOf(productId);
+  if (index === -1) {
+    db.wishlists[userId].push(productId);
+  } else {
+    db.wishlists[userId].splice(index, 1);
+  }
+  saveDb(db);
+  return db.wishlists[userId];
+}
+
+// Order operations
+export function getOrders(): Order[] {
+  return getDb().orders;
+}
+
+export function getOrdersByUserId(userId: string): Order[] {
+  return getDb().orders.filter(o => o.userId === userId);
+}
+
+export function getOrderById(id: string): Order | undefined {
+  return getDb().orders.find(o => o.id === id);
+}
+
+export function addOrder(order: Omit<Order, 'id' | 'createdAt'>): Order {
+  const db = getDb();
+  const newOrder: Order = {
+    ...order,
+    id: 'order_' + Math.random().toString(36).substring(2, 11).toUpperCase(),
+    createdAt: new Date().toISOString()
+  };
+  db.orders.push(newOrder);
+  saveDb(db);
+  return newOrder;
+}
+
+export function updateOrderStatus(orderId: string, status: Order['orderStatus']): Order | undefined {
+  const db = getDb();
+  const order = db.orders.find(o => o.id === orderId);
+  if (!order) return undefined;
+  
+  order.orderStatus = status;
+  if (status === 'paid') {
+    order.paymentStatus = 'paid';
+  }
+  saveDb(db);
+  return order;
+}

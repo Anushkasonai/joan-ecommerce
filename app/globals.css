@@ -1,0 +1,154 @@
+@import "tailwindcss";
+
+:root {
+  --background: #FFFCF7;
+  --foreground: #292633;
+
+  /* Joan Official Palette */
+  --primary-lavender: #B9A7E8;
+  --primary-lavender-dark: #7962B5;
+  --pastel-pink: #F6DDE8;
+  --bg-cream: #FFFCF7;
+  --card-white: #FFFFFF;
+  --text-dark: #292633;
+  --text-muted: #77717F;
+  --border-lavender: #E9E1F5;
+  --sale-badge: #D94F70;
+  --success: #37866A;
+
+  --font-serif: var(--font-cormorant), 'Cormorant Garamond', Georgia, serif;
+  --font-sans: var(--font-plus-jakarta), 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+}
+
+@theme {
+  --color-lavender: #B9A7E8;
+  --color-lavender-dark: #7962B5;
+  --color-lavender-light: #F4EFFF;
+  --color-pink-soft: #F6DDE8;
+  --color-cream: #FFFCF7;
+  --color-card: #FFFFFF;
+  --color-text-dark: #292633;
+  --color-text-muted: #77717F;
+  --color-border-lavender: #E9E1F5;
+  --color-sale: #D94F70;
+  --color-success: #37866A;
+
+  --font-serif: var(--font-cormorant), 'Cormorant Garamond', Georgia, serif;
+  --font-sans: var(--font-plus-jakarta), 'Plus Jakarta Sans', system-ui, sans-serif;
+}
+
+body {
+  background-color: var(--bg-cream);
+  color: var(--text-dark);
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom Typography Utilities */
+.font-serif {
+  font-family: var(--font-serif);
+}
+
+.font-sans {
+  font-family: var(--font-sans);
+}
+
+/* Card & Surface Utilities */
+.joan-card {
+  background: #FFFFFF;
+  border: 1px solid var(--border-lavender);
+  border-radius: 18px;
+  box-shadow: 0 4px 18px -2px rgba(41, 38, 51, 0.04);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.joan-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 28px -4px rgba(121, 98, 181, 0.12);
+  border-color: #B9A7E8;
+}
+
+.joan-shadow-sm {
+  box-shadow: 0 2px 10px -1px rgba(41, 38, 51, 0.04);
+}
+
+.joan-shadow {
+  box-shadow: 0 4px 20px -2px rgba(121, 98, 181, 0.08);
+}
+
+.joan-shadow-lg {
+  box-shadow: 0 16px 36px -6px rgba(121, 98, 181, 0.14);
+}
+
+/* Blinkit Style Quick-Add Button & Stepper */
+.quick-add-btn {
+  background-color: #FFFFFF;
+  color: #7962B5;
+  border: 1.5px solid #B9A7E8;
+  font-weight: 700;
+  border-radius: 12px;
+  transition: all 0.2s ease;
+}
+
+.quick-add-btn:hover {
+  background-color: #F4EFFF;
+  border-color: #7962B5;
+}
+
+.quick-stepper {
+  background-color: #7962B5;
+  color: #FFFFFF;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 700;
+  box-shadow: 0 2px 8px rgba(121, 98, 181, 0.25);
+}
+
+/* Primary Joan Button */
+.btn-joan-primary {
+  background-color: #7962B5;
+  color: #FFFFFF;
+  font-weight: 600;
+  border-radius: 9999px;
+  transition: all 0.2s ease;
+}
+
+.btn-joan-primary:hover {
+  background-color: #654fa0;
+  box-shadow: 0 4px 14px rgba(121, 98, 181, 0.3);
+}
+
+.btn-joan-secondary {
+  background-color: #B9A7E8;
+  color: #292633;
+  font-weight: 600;
+  border-radius: 9999px;
+  transition: all 0.2s ease;
+}
+
+.btn-joan-secondary:hover {
+  background-color: #a792de;
+}
+
+/* Smooth custom scrollbars */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: #FFFCF7;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #E9E1F5;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #B9A7E8;
+}
